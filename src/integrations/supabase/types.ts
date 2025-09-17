@@ -14,16 +14,134 @@ export type Database = {
   }
   public: {
     Tables: {
-      [_ in never]: never
+      search_results: {
+        Row: {
+          chunk_content: string
+          chunk_index: number
+          chunk_tokens: number
+          created_at: string | null
+          html_tag_context: string | null
+          id: string
+          relevance_score: number | null
+          search_id: string
+        }
+        Insert: {
+          chunk_content: string
+          chunk_index: number
+          chunk_tokens: number
+          created_at?: string | null
+          html_tag_context?: string | null
+          id?: string
+          relevance_score?: number | null
+          search_id: string
+        }
+        Update: {
+          chunk_content?: string
+          chunk_index?: number
+          chunk_tokens?: number
+          created_at?: string | null
+          html_tag_context?: string | null
+          id?: string
+          relevance_score?: number | null
+          search_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "search_results_search_id_fkey"
+            columns: ["search_id"]
+            isOneToOne: false
+            referencedRelation: "searches"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      searches: {
+        Row: {
+          created_at: string | null
+          error_message: string | null
+          id: string
+          processing_time_ms: number | null
+          results_count: number | null
+          search_query: string
+          status: Database["public"]["Enums"]["search_status"] | null
+          total_chunks: number | null
+          updated_at: string | null
+          user_id: string | null
+          website_url: string
+        }
+        Insert: {
+          created_at?: string | null
+          error_message?: string | null
+          id?: string
+          processing_time_ms?: number | null
+          results_count?: number | null
+          search_query: string
+          status?: Database["public"]["Enums"]["search_status"] | null
+          total_chunks?: number | null
+          updated_at?: string | null
+          user_id?: string | null
+          website_url: string
+        }
+        Update: {
+          created_at?: string | null
+          error_message?: string | null
+          id?: string
+          processing_time_ms?: number | null
+          results_count?: number | null
+          search_query?: string
+          status?: Database["public"]["Enums"]["search_status"] | null
+          total_chunks?: number | null
+          updated_at?: string | null
+          user_id?: string | null
+          website_url?: string
+        }
+        Relationships: []
+      }
+      user_preferences: {
+        Row: {
+          created_at: string | null
+          dark_mode: boolean | null
+          id: string
+          max_results: number | null
+          max_tokens_per_chunk: number | null
+          preferred_search_mode: string | null
+          updated_at: string | null
+          user_id: string
+        }
+        Insert: {
+          created_at?: string | null
+          dark_mode?: boolean | null
+          id?: string
+          max_results?: number | null
+          max_tokens_per_chunk?: number | null
+          preferred_search_mode?: string | null
+          updated_at?: string | null
+          user_id: string
+        }
+        Update: {
+          created_at?: string | null
+          dark_mode?: boolean | null
+          id?: string
+          max_results?: number | null
+          max_tokens_per_chunk?: number | null
+          preferred_search_mode?: string | null
+          updated_at?: string | null
+          user_id?: string
+        }
+        Relationships: []
+      }
     }
     Views: {
       [_ in never]: never
     }
     Functions: {
-      [_ in never]: never
+      get_user_search_stats: {
+        Args: { user_uuid: string }
+        Returns: Json
+      }
     }
     Enums: {
-      [_ in never]: never
+      search_status: "pending" | "processing" | "completed" | "failed"
     }
     CompositeTypes: {
       [_ in never]: never
@@ -150,6 +268,8 @@ export type CompositeTypes<
 
 export const Constants = {
   public: {
-    Enums: {},
+    Enums: {
+      search_status: ["pending", "processing", "completed", "failed"],
+    },
   },
 } as const
