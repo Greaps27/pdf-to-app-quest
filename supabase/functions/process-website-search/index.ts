@@ -35,20 +35,32 @@ serve(async (req) => {
   }
 
   const startTime = performance.now();
-  
+
+  // Parse request body once to avoid "Body is unusable" in catch blocks
+  let payload: SearchRequest;
   try {
-    const { searchId, websiteUrl, searchQuery, maxResults = 10, maxTokensPerChunk = 500 } = await req.json() as SearchRequest;
-    
+    payload = await req.json() as SearchRequest;
+  } catch (e) {
+    console.error('Invalid JSON payload:', e);
+    return new Response(JSON.stringify({ success: false, error: 'Invalid JSON payload' }), {
+      status: 400,
+      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+    });
+  }
+
+  const { searchId, websiteUrl, searchQuery, maxResults = 10, maxTokensPerChunk = 500 } = payload;
+
+  try {
     console.log(`Starting search for: ${websiteUrl} with query: "${searchQuery}"`);
 
     // Update search status to processing
     await updateSearchStatus(searchId, 'processing');
 
-    // Step 1: Fetch HTML content
+    // Step 1: Fetch HTML content (with resilient fallback)
     const htmlContent = await fetchWebsiteContent(websiteUrl);
     console.log(`Fetched ${htmlContent.length} characters from website`);
 
-    // Step 2: Parse and clean HTML
+    // Step 2: Parse and clean HTML/text
     const cleanedContent = parseAndCleanHTML(htmlContent);
     console.log(`Cleaned content: ${cleanedContent.length} characters`);
 
@@ -67,32 +79,31 @@ serve(async (req) => {
     const processingTime = Math.round(performance.now() - startTime);
     await updateSearchStatus(searchId, 'completed', processingTime, relevantChunks.length);
 
-    return new Response(JSON.stringify({ 
-      success: true, 
+    return new Response(JSON.stringify({
+      success: true,
       resultsCount: relevantChunks.length,
-      processingTime 
+      processingTime
     }), {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     });
 
   } catch (error) {
     console.error('Error in process-website-search:', error);
-    
+
     const processingTime = Math.round(performance.now() - startTime);
-    
-    // Try to get searchId from request to update status
-    try {
-      const requestData = await req.clone().json();
-      if (requestData.searchId) {
-        await updateSearchStatus(requestData.searchId, 'failed', processingTime, 0, error.message);
+
+    // Update status with error using already parsed payload
+    if (searchId) {
+      try {
+        await updateSearchStatus(searchId, 'failed', processingTime, 0, (error as Error).message);
+      } catch (statusErr) {
+        console.error('Failed to update status after error:', statusErr);
       }
-    } catch (parseError) {
-      console.error('Failed to parse request for error handling:', parseError);
     }
 
-    return new Response(JSON.stringify({ 
-      success: false, 
-      error: error.message 
+    return new Response(JSON.stringify({
+      success: false,
+      error: (error as Error).message
     }), {
       status: 500,
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
@@ -102,62 +113,94 @@ serve(async (req) => {
 
 async function fetchWebsiteContent(url: string): Promise<string> {
   console.log(`Fetching content from: ${url}`);
-  
+
   let content = '';
-  
-  try {
-    // First try direct fetch
-    const response = await fetch(url, {
+
+  // Helper to try direct fetch once
+  const tryDirectFetch = async () => {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 12000); // 12s timeout
+    try {
+      const response = await fetch(url, {
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0 Safari/537.36',
+          'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+          'Accept-Language': 'en-US,en;q=0.9',
+        },
+        redirect: 'follow',
+        signal: controller.signal,
+      });
+      clearTimeout(timeout);
+
+      if (!response.ok) {
+        throw new Error(`Failed to fetch website: ${response.status} ${response.statusText}`);
+      }
+
+      const contentType = response.headers.get('content-type') || '';
+      if (!contentType.includes('text/html')) {
+        // Some servers mislabel content; we'll still try to parse later but prefer Jina
+        console.warn(`Unexpected content type: ${contentType}. Will consider Jina fallback.`);
+      }
+
+      const text = await response.text();
+      console.log(`Direct fetch got ${text.length} characters`);
+      return text;
+    } catch (err) {
+      console.warn('Direct fetch failed:', (err as Error).message);
+      throw err;
+    }
+  };
+
+  // Helper to try Jina Reader API
+  const tryJina = async () => {
+    console.log('Trying Jina Reader API fallback...');
+    const jinaResponse = await fetch(`https://r.jina.ai/${encodeURIComponent(url)}`, {
       headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-        'Accept-Language': 'en-US,en;q=0.9',
+        'User-Agent': 'Mozilla/5.0 (compatible; WebSearch-Bot/1.0)',
+        'Accept': 'text/plain',
       },
       redirect: 'follow',
     });
 
-    if (!response.ok) {
-      throw new Error(`Failed to fetch website: ${response.status} ${response.statusText}`);
+    if (!jinaResponse.ok) {
+      throw new Error(`Jina Reader failed: ${jinaResponse.status} ${jinaResponse.statusText}`);
     }
 
-    const contentType = response.headers.get('content-type') || '';
-    if (!contentType.includes('text/html')) {
-      throw new Error(`Invalid content type: ${contentType}. Expected HTML content.`);
-    }
+    const jinaContent = await jinaResponse.text();
+    console.log(`Jina Reader returned ${jinaContent.length} characters`);
+    return jinaContent;
+  };
 
-    content = await response.text();
-    console.log(`Direct fetch got ${content.length} characters`);
-    
-    // If content is very short (likely JS-rendered), try Jina Reader API
-    if (content.length < 500 || !content.includes('<body')) {
-      console.log('Content seems JS-rendered, trying Jina Reader API...');
-      try {
-        const jinaResponse = await fetch(`https://r.jina.ai/${encodeURIComponent(url)}`, {
-          headers: {
-            'User-Agent': 'Mozilla/5.0 (compatible; WebSearch-Bot/1.0)',
-            'Accept': 'text/plain',
-          },
-          redirect: 'follow',
-        });
-        
-        if (jinaResponse.ok) {
-          const jinaContent = await jinaResponse.text();
-          if (jinaContent.length > content.length) {
-            console.log(`Jina Reader got better content: ${jinaContent.length} vs ${content.length} characters`);
-            content = jinaContent;
-          }
-        }
-      } catch (jinaError) {
-        console.log('Jina Reader failed, using original content:', jinaError.message);
-      }
+  // 1) Try direct fetch, but if it fails, fall back to Jina
+  try {
+    content = await tryDirectFetch();
+  } catch (_) {
+    try {
+      content = await tryJina();
+    } catch (jerr) {
+      console.error('Both direct fetch and Jina failed:', (jerr as Error).message);
+      throw jerr; // bubble up
     }
-    
-    return content;
-    
-  } catch (error) {
-    console.error('Error fetching content:', error);
-    throw error;
   }
+
+  // 2) If direct fetch succeeded but content looks JS-rendered/empty, prefer Jina
+  if (!content || content.length < 500 || !content.includes('<body')) {
+    try {
+      const jina = await tryJina();
+      if (!content || jina.length > content.length) {
+        console.log('Using Jina content as it appears more complete.');
+        content = jina;
+      }
+    } catch (jinaError) {
+      console.warn('Jina fallback attempt failed:', (jinaError as Error).message);
+    }
+  }
+
+  if (!content || content.trim().length === 0) {
+    throw new Error('Unable to fetch readable content from target URL.');
+  }
+
+  return content;
 }
 
 function parseAndCleanHTML(html: string): string {
