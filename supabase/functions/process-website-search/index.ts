@@ -78,14 +78,16 @@ serve(async (req) => {
   } catch (error) {
     console.error('Error in process-website-search:', error);
     
+    const processingTime = Math.round(performance.now() - startTime);
+    
     // Try to get searchId from request to update status
     try {
-      const body = await req.json();
-      if (body.searchId) {
-        await updateSearchStatus(body.searchId, 'failed', 0, 0, error.message);
+      const requestData = await req.clone().json();
+      if (requestData.searchId) {
+        await updateSearchStatus(requestData.searchId, 'failed', processingTime, 0, error.message);
       }
-    } catch (e) {
-      console.error('Failed to update search status:', e);
+    } catch (parseError) {
+      console.error('Failed to parse request for error handling:', parseError);
     }
 
     return new Response(JSON.stringify({ 

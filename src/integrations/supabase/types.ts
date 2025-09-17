@@ -66,7 +66,7 @@ export type Database = {
           status: Database["public"]["Enums"]["search_status"] | null
           total_chunks: number | null
           updated_at: string | null
-          user_id: string | null
+          user_id: string
           website_url: string
         }
         Insert: {
@@ -79,7 +79,7 @@ export type Database = {
           status?: Database["public"]["Enums"]["search_status"] | null
           total_chunks?: number | null
           updated_at?: string | null
-          user_id?: string | null
+          user_id: string
           website_url: string
         }
         Update: {
@@ -92,7 +92,7 @@ export type Database = {
           status?: Database["public"]["Enums"]["search_status"] | null
           total_chunks?: number | null
           updated_at?: string | null
-          user_id?: string | null
+          user_id?: string
           website_url?: string
         }
         Relationships: []

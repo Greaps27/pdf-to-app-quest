@@ -31,13 +31,20 @@ export const useSearch = () => {
     setStatus('validating');
     
     try {
+      // Get current user
+      const { data: { user }, error: userError } = await supabase.auth.getUser();
+      if (userError || !user) {
+        throw new Error('You must be logged in to perform searches');
+      }
+
       // Create search record in database
       const { data: search, error: insertError } = await supabase
         .from('searches')
         .insert({
           website_url: query.websiteUrl,
           search_query: query.searchQuery,
-          status: 'pending'
+          status: 'pending',
+          user_id: user.id,
         })
         .select()
         .single();
